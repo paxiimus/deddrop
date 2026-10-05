@@ -1,0 +1,144 @@
+version: '3.9'
+
+x-api-env: &api-env
+  DB_ENGINE: django.db.backends.postgresql
+  DB_NAME: deaddrop
+  DB_USER: deaddrop
+  DB_PASSWORD: ${DB_PASSWORD:-change_me}
+  DB_HOST: db
+  DB_PORT: 5432
+  CELERY_BROKER_URL: redis://redis:6379/0
+  REDIS_CACHE_URL: redis://redis:6379/1
+  DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-change-me-in-production}
+  DEBUG: ${DEBUG:-False}
+  ALLOWED_HOSTS: ${ALLOWED_HOSTS:-}
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:4173}
+  DEPLOYMENT_MODE: ${DEPLOYMENT_MODE:-public}
+  # Independent of DEPLOYMENT_MODE — see settings.py for why. Blank (the
+  # default) means no access gate at all, matching how every deployment
+  # of this project has always worked out of the box.
+  PRIVATE_ACCESS_CODE: ${PRIVATE_ACCESS_CODE:-}
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped  # without this, a reboot left the database/cache down while api restarted into a crash loop
+    environment:
+      POSTGRES_DB: deaddrop
+      POSTGRES_USER: deaddrop
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-change_me}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U deaddrop"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build: ./api
+    env_file: .env
+    environment:
+      <<: *api-env
+      PROCESS_TYPE: web
+      GUNICORN_WORKERS: ${GUNICORN_WORKERS:-3}
+      DJANGO_SUPERUSER_USERNAME: ${DJANGO_SUPERUSER_USERNAME:-admin}
+      DJANGO_SUPERUSER_PASSWORD: ${DJANGO_SUPERUSER_PASSWORD:-}
+      DJANGO_SUPERUSER_EMAIL: ${DJANGO_SUPERUSER_EMAIL:-admin@example.com}
+    ports:
+      # 127.0.0.1, not a bare port — binding to all interfaces would put
+      # this directly on the public internet, bypassing Caddy and TLS
+      # entirely, unless the operator separately remembers to configure a
+      # host firewall (which nothing in DEPLOYING.md or SECURITY.md
+      # actually told them to do). Caddy runs on this same host and
+      # reaches it via localhost regardless — this only removes the
+      # direct, external, unencrypted path, and doesn't depend on the
+      # operator getting a separate step right.
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # Only the api container runs migrations (see entrypoint.sh) — this is
+      # what lets celery-worker/celery-beat wait for "migrations actually
+      # done" instead of just "the process started".
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/drops/?lat=0&lng=0', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    volumes:
+      - media:/app/media
+      - static:/app/staticfiles
+    restart: unless-stopped
+
+  celery-worker:
+    build: ./api
+    env_file: .env
+    environment:
+      <<: *api-env
+      PROCESS_TYPE: celery-worker
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - media:/app/media
+    restart: unless-stopped
+
+  celery-beat:
+    build: ./api
+    env_file: .env
+    environment:
+      <<: *api-env
+      PROCESS_TYPE: celery-beat
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./web
+      args:
+        # Vite bakes these into the built JS — changing either means
+        # rebuilding this image (`make build`), not just restarting.
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+        VITE_DEPLOYMENT_MODE: ${DEPLOYMENT_MODE:-public}
+        # Sourced from the SAME backend-facing env var names the API itself
+        # reads (MAX_PHOTOS_PER_DROP etc., see settings.py) — one value an
+        # operator sets, both the enforcement and the file-picker limit
+        # pick it up, rather than two names that have to be kept in sync.
+        VITE_MAX_PHOTOS: ${MAX_PHOTOS_PER_DROP:-2}
+        VITE_MAX_VIDEOS: ${MAX_VIDEOS_PER_DROP:-1}
+        VITE_MAX_DROP_LIFETIME_HOURS: ${MAX_DROP_LIFETIME_HOURS:-336}
+    ports:
+      # Same 127.0.0.1 reasoning as the api service above — the frontend
+      # isn't sensitive in the same way the admin/API are, but serving
+      # real traffic directly over this container's own plain HTTP,
+      # bypassing Caddy's TLS termination, is still a real gap (a MITM
+      # could inject into an unencrypted response). Same host port
+      # whether you're running `npm run dev` (Vite, port 5173) or the
+      # full containerized stack — CORS_ORIGINS above doesn't need to
+      # change depending on which one you're using.
+      - "127.0.0.1:5173:80"
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  media:
+  static:

@@ -1,0 +1,26 @@
+# Single-instance reverse proxy — copy to /etc/caddy/Caddyfile, fill in
+# your real domains, `sudo systemctl reload caddy`. Caddy issues and
+# renews Let's Encrypt certs automatically for both domains listed below;
+# nothing else to configure for TLS.
+
+app.your-domain.example {
+    reverse_proxy localhost:5173
+}
+
+# No hard body-size cap in Caddy by default, unlike Nginx's 1MB default —
+# request_body below is still explicit rather than relying on that,
+# matching whatever MAX_VIDEO_SIZE_MB this instance is configured with in
+# .env (only relevant if DEPLOYMENT_MODE=private — public has no media
+# upload path at all, so this limit is simply never exercised there).
+api.your-domain.example {
+    request_body {
+        max_size 100MB
+    }
+    # Optional, recommended: only let your own IP(s) reach the admin.
+    # @admin {
+    #     path /admin*
+    #     not remote_ip 203.0.113.10
+    # }
+    # respond @admin 404
+    reverse_proxy localhost:8000
+}
