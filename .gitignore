@@ -15,3 +15,7 @@ db.sqlite3
 # Machine-specific compose overrides (e.g. the hosting setup binds ports to a
 # private IP this way) — never part of the shared config.
 docker-compose.override.yml
+
+# deploy.sh: your local deploy settings, and its server-side rollback marker
+deploy.env
+.deploy-previous

@@ -10,31 +10,33 @@
       content="Leave something at a location for someone else to find. No account required. Open source, self-hostable, privacy-first."
     />
 
+    <!-- Explicit default: other sites get our origin, never the page path
+         (which can contain a drop ID). Stricter policies break CORS POSTs. -->
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
     <link rel="icon" type="image/x-icon" href="/favicon.ico" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
 
-    <!-- Replace your-domain.example with the real deployment domain before
-         launch — OG/Twitter previews generally need an absolute image URL
-         to render correctly, a relative path isn't reliably resolved by
-         link-preview scrapers across platforms. -->
+    <!-- Link previews need absolute URLs. %VITE_PUBLIC_URL% is filled in at
+         build time from VITE_PUBLIC_URL in .env (deploy.sh sets it to
+         https://<APP_DOMAIN>), so there's nothing to edit here. -->
     <meta property="og:type" content="website" />
     <meta property="og:title" content="Dead Drop" />
     <meta
       property="og:description"
       content="Leave something at a location for someone else to find. No account required. Open source, self-hostable, privacy-first."
     />
-    <meta property="og:image" content="https://your-domain.example/og-image.png" />
-    <meta property="og:url" content="https://your-domain.example" />
+    <meta property="og:image" content="%VITE_PUBLIC_URL%/og-image.png" />
+    <meta property="og:url" content="%VITE_PUBLIC_URL%" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Dead Drop" />
     <meta
       name="twitter:description"
       content="Leave something at a location for someone else to find. No account required."
     />
-    <meta name="twitter:image" content="https://your-domain.example/og-image.png" />
+    <meta name="twitter:image" content="%VITE_PUBLIC_URL%/og-image.png" />
   </head>
   <body>
     <div id="root"></div>

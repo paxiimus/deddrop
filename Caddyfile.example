@@ -3,6 +3,15 @@
 # renews Let's Encrypt certs automatically for both domains listed below;
 # nothing else to configure for TLS.
 
+# No access log, and the two loggers that print client IPs on errors are
+# excluded, so visitor IPs never reach the journal.
+{
+	log default {
+		output stderr
+		exclude http.log.error http.handlers.reverse_proxy
+	}
+}
+
 app.your-domain.example {
     reverse_proxy localhost:5173
 }

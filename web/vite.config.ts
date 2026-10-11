@@ -3,6 +3,17 @@ import { defineConfig } from "vite";
 import { VitePWA } from "vite-plugin-pwa";
 
 export default defineConfig({
+  // Same paths nginx proxies in production (nginx.conf.template).
+  server: {
+    proxy: {
+      "/tiles": { target: "https://tile.openstreetmap.org", changeOrigin: true, rewrite: (p) => p.replace(/^\/tiles/, "") },
+      "/geocode": {
+        target: "https://nominatim.openstreetmap.org",
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/geocode\?/, "/search?format=jsonv2&limit=1&"),
+      },
+    },
+  },
   plugins: [
     react(),
     VitePWA({

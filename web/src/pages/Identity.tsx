@@ -6,7 +6,14 @@ import LoadingButton from "../components/LoadingButton";
 import Spinner from "../components/Spinner";
 import { useConfirm } from "../lib/confirm";
 import { generateKeypair, type Keypair } from "../lib/crypto";
-import { clearIdentity, forgetDrops, getIdentity, listOwnerSecretDropIds, setIdentity } from "../lib/storage";
+import {
+  clearIdentity,
+  forgetAllDrops,
+  forgetDrops,
+  getIdentity,
+  listOwnerSecretDropIds,
+  setIdentity,
+} from "../lib/storage";
 import { useToast } from "../lib/toast";
 import { useVisibleInterval } from "../lib/useVisibleInterval";
 
@@ -125,6 +132,16 @@ export default function Identity() {
     toast("Identity removed from this device.");
   }
 
+  async function forgetAll() {
+    const ok = await confirmDialog(
+      "This removes every drop's owner secret and message key from this device. You won't be able to manage those drops or read their messages here again (unless you still have the links). Continue?",
+    );
+    if (!ok) return;
+    forgetAllDrops();
+    setAnonDrops([]);
+    toast("Drops forgotten on this device.");
+  }
+
   function exportKey() {
     if (!identity) return;
     const blob = new Blob([JSON.stringify(identity)], { type: "application/json" });
@@ -237,6 +254,10 @@ export default function Identity() {
           seconds while it stays open in a tab.
         </p>
         <DropList items={anonDrops} />
+        <p className="hint">Saved drops are forgotten automatically once they can no longer exist on the server.</p>
+        <button className="danger" onClick={forgetAll}>
+          Forget all drops on this device
+        </button>
       </div>
     </>
   );

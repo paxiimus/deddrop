@@ -1,8 +1,10 @@
 from django.conf import settings
 from rest_framework.throttling import SimpleRateThrottle
 
-# Keyed off IP in the cache (Redis) only — never written to the database, and
-# never tied to an Identity. Applies regardless of auth status: minting a new
+from deaddrop.privacy import ip_token
+
+# Keyed off a hash of the IP in the cache (Redis) only — never written to the
+# database, never tied to an Identity, and never stored raw. Applies regardless of auth status: minting a new
 # throwaway keypair is free, so an identity-only throttle would be pointless
 # for abuse prevention. This is deliberately the *only* place an IP touches
 # the system at all, and it's never persisted.
@@ -10,8 +12,7 @@ from rest_framework.throttling import SimpleRateThrottle
 
 class _IPRateThrottle(SimpleRateThrottle):
     def get_cache_key(self, request, view):
-        ident = self.get_ident(request)
-        return self.cache_format % {"scope": self.scope, "ident": ident}
+        return self.cache_format % {"scope": self.scope, "ident": ip_token(request)}
 
 
 class DropCreateThrottle(_IPRateThrottle):

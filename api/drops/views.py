@@ -18,6 +18,7 @@ from rest_framework.response import Response
 
 from deaddrop import private_access
 from deaddrop.middleware import cooling_info
+from deaddrop.privacy import ip_token
 from identities.models import Identity
 
 from .models import Drop, Message
@@ -286,7 +287,7 @@ class MessageListCreateView(generics.ListCreateAPIView):
         qs = Drop.objects.select_for_update() if lock else Drop.objects
         drop = get_object_or_404(qs, pk=self.kwargs["drop_pk"])
         if drop.is_password_protected:
-            fail_key = f"msg_pwfail:{self.get_throttles()[0].get_ident(self.request)}"
+            fail_key = f"msg_pwfail:{ip_token(self.request)}"
             fails = cache.get(fail_key, 0)
             if fails >= MESSAGE_PASSWORD_FAILS_PER_HOUR:
                 raise Throttled(detail="Too many incorrect password attempts.")
@@ -316,8 +317,8 @@ class MessageListCreateView(generics.ListCreateAPIView):
                 raise ValidationError(f"Maximum {settings.MAX_MESSAGES_PER_DROP} messages per drop.")
             # Per-IP share of a thread, so one sender can't fill the whole
             # cap. Kept for the drop's maximum lifetime (the key's TTL).
-            ip = self.get_throttles()[0].get_ident(self.request)
-            share_key = f"msg_share:{drop.pk}:{ip}"
+            # Drop and IP hashed together: the key doesn't reveal either.
+            share_key = f"msg_share:{ip_token(self.request, drop.pk)}"
             if cache.get(share_key, 0) >= settings.MAX_MESSAGES_PER_DROP // 3:
                 raise ValidationError("You've reached your message limit on this drop.")
             sender = self.request.user if isinstance(self.request.user, Identity) else None

@@ -149,8 +149,10 @@ export const api = {
   // too, not two unrelated things that happened to share a file.
   submitPrivateAccessCode: (code: string) => request("POST", "/api/status/", { body: { code } }),
 
+  // Rounded to 2 decimals (~1km): the server never learns the exact spot.
+  // Callers compute precise distances themselves (see Home.tsx).
   listDrops: (lat: number, lng: number, radius = 50000) =>
-    request("GET", "/api/drops/", { query: `lat=${lat}&lng=${lng}&radius=${radius}` }),
+    request("GET", "/api/drops/", { query: `lat=${lat.toFixed(2)}&lng=${lng.toFixed(2)}&radius=${radius}` }),
 
   // Up to 50 drops by ID in one request — see DropViewSet.get_queryset.
   dropsByIds: (ids: string[]) => request("GET", "/api/drops/", { query: `ids=${ids.join(",")}` }),

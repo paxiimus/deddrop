@@ -292,7 +292,7 @@ export default function CreateDrop() {
           </LoadingButton>
         </div>
         <MapContainer center={[20, 0]} zoom={3} style={{ height: 240 }}>
-          <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+          <TileLayer attribution="&copy; OpenStreetMap contributors" url="/tiles/{z}/{x}/{y}.png" />
           {recenterTo && <Recenter center={recenterTo} />}
           <LocationPicker
             onPick={(la, lo) => {

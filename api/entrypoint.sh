@@ -131,8 +131,10 @@ case "$PROCESS_TYPE" in
             --timeout ${GUNICORN_TIMEOUT:-300} \
             --max-requests 1000 \
             --max-requests-jitter 50 \
-            --access-logfile - \
             --error-logfile -
+        # No --access-logfile, deliberately: every request line (including
+        # /api/drops/?lat=…&lng=…, i.e. where people are looking) would land
+        # in the container logs on disk. Errors are still logged.
         ;;
     celery-worker)
         log "Starting Celery worker..."

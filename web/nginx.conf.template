@@ -1,0 +1,141 @@
+# Rendered by the nginx image at start-up: envsubst fills ${OSM_USER_AGENT} and
+# ${OSM_REFERER}; nginx's own lowercase $variables are left alone.
+
+# Map tiles and place search are fetched by this server, not the visitor's
+# browser, so OpenStreetMap never sees visitor IPs or which areas they browse.
+# Tiles are cached on disk (unlinked to anyone; lost on redeploy); search
+# results only in memory (tmpfs) and briefly, since a search term can be
+# telling on its own.
+#
+# Two layers, so each limit counts the right thing:
+#   front (port 80):        cache + per-visitor limits. Cached tiles still
+#                           count, so one visitor can't scrape through us.
+#   upstream (127.0.0.1:8081, cache misses only): server-wide caps on what
+#                           actually reaches OpenStreetMap.
+proxy_cache_path /var/cache/nginx/tiles levels=1:2 keys_zone=tiles:10m max_size=2g inactive=30d use_temp_path=off;
+proxy_cache_path /var/cache/nginx/geocode levels=1:2 keys_zone=geocode:1m max_size=8m inactive=1d use_temp_path=off;
+
+# Per visitor. Caddy sets X-Forwarded-For to the real client (it ignores
+# client-supplied values), and only Caddy can reach this port. The address
+# lives in nginx's shared memory only — $remote_addr is left alone, so
+# error logs still show the proxy, never the visitor. Without the header
+# (local dev) everyone shares the container's peer address.
+map $http_x_forwarded_for $visitor {
+    ""      $remote_addr;
+    default $http_x_forwarded_for;
+}
+# A fresh map view is ~20–30 tiles; panning and zooming add bursts on top.
+limit_req_zone $visitor zone=tiles_visitor:10m rate=5r/s;
+limit_req_zone $visitor zone=search_visitor:10m rate=10r/m;
+
+# Server-wide, on cache misses only. OSM publishes no tile threshold; this
+# caps what one instance can ever send them. Raise it if busy maps get slow.
+limit_req_zone $server_name zone=osm_tiles:1m rate=10r/s;
+# Nominatim's usage policy: at most one request per second, from the whole server.
+limit_req_zone $server_name zone=nominatim:1m rate=1r/s;
+limit_req_status 429;
+
+# Send only what the upstream needs — no cookies, X-Forwarded-For or browser
+# fingerprint. OSM's tile policy requires an accurate Referer from websites,
+# even through a proxy, so it's this site's origin: the same thing browsers
+# send by default.
+proxy_pass_request_headers off;
+proxy_pass_request_body off;
+proxy_set_header User-Agent "${OSM_USER_AGENT}";
+proxy_set_header Referer "${OSM_REFERER}";
+proxy_set_header Accept "*/*";
+proxy_hide_header Set-Cookie;
+proxy_ignore_headers Set-Cookie;
+
+server {
+    listen 127.0.0.1:8081;
+    server_name osm-upstream;
+    access_log off;
+
+    # Docker's embedded DNS; needed because the upstream hosts are variables.
+    resolver 127.0.0.11 valid=300s ipv6=off;
+    proxy_ssl_server_name on;
+    proxy_ssl_verify on;
+    proxy_ssl_verify_depth 3;
+    proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
+
+    location ~ "^/tiles/(?<tz>1?\d)/(?<tx>\d{1,6})/(?<ty>\d{1,6})\.png$" {
+        # Queued, not rejected: a busy moment loads tiles slower, not blank.
+        limit_req zone=osm_tiles burst=100;
+        set $osm_tiles tile.openstreetmap.org;
+        proxy_pass https://$osm_tiles/$tz/$tx/$ty.png;
+    }
+
+    location = /geocode {
+        # Search terms appear in error lines (request URI); keep them out.
+        error_log stderr crit;
+        limit_req zone=nominatim burst=5;
+        set $nominatim nominatim.openstreetmap.org;
+        proxy_pass https://$nominatim/search?format=jsonv2&limit=1&q=$arg_q;
+    }
+
+    location / {
+        return 404;
+    }
+}
+
+server {
+    listen 80;
+    server_name _;
+    # No access log: it would record every visitor's IP and which drops
+    # they opened. Errors still go to the container's stderr.
+    access_log off;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    gzip on;
+    gzip_comp_level 6;
+    gzip_min_length 1024;
+    gzip_vary on;
+    gzip_types text/css application/javascript application/json application/manifest+json image/svg+xml;
+
+    proxy_cache_lock on;
+    # Also serves a stale copy when the server-wide cap says no (429).
+    proxy_cache_use_stale error timeout updating http_429 http_500 http_502 http_503 http_504;
+
+    location ~ "^/tiles/(?<tz>1?\d)/(?<tx>\d{1,6})/(?<ty>\d{1,6})\.png$" {
+        limit_except GET { deny all; }
+        limit_req zone=tiles_visitor burst=100 nodelay;
+        proxy_pass http://127.0.0.1:8081/tiles/$tz/$tx/$ty.png;
+        proxy_cache tiles;
+        proxy_cache_key $tz/$tx/$ty;
+        proxy_cache_valid 200 7d;
+        proxy_cache_valid 404 1h;
+    }
+
+    location = /geocode {
+        error_log stderr crit;
+        if ($arg_q = "") { return 400; }
+        limit_except GET { deny all; }
+        limit_req zone=search_visitor burst=5 nodelay;
+        proxy_pass http://127.0.0.1:8081/geocode?q=$arg_q;
+        proxy_cache geocode;
+        proxy_cache_key $arg_q;
+        proxy_cache_valid 200 1d;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # Must revalidate, or users keep running an old build after a deploy.
+    location ~ ^/(index\.html|sw\.js|registerSW\.js|manifest\.webmanifest)$ {
+        add_header Cache-Control "no-cache";
+    }
+
+    # Vite fingerprints these filenames, so they can be cached forever.
+    location ^~ /assets/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+
+    location ~* \.(png|ico|svg|woff2?)$ {
+        add_header Cache-Control "public, max-age=604800";
+    }
+}

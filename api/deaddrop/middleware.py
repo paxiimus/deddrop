@@ -150,9 +150,9 @@ class AdminLoginThrottleMiddleware:
 
     def __call__(self, request):
         if request.method == "POST" and request.path.startswith("/admin/login/"):
-            from rest_framework.throttling import BaseThrottle
+            from .privacy import ip_token
 
-            key = f"admin_login:{BaseThrottle().get_ident(request)}"
+            key = f"admin_login:{ip_token(request)}"
             attempts = cache.get(key, 0)
             if attempts >= ADMIN_LOGIN_ATTEMPTS_PER_HOUR:
                 return JsonResponse({"detail": "Too many login attempts. Try again later."}, status=429)

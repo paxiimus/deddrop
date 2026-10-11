@@ -8,6 +8,7 @@ import { api } from "../lib/api";
 import DropSummary from "../components/DropSummary";
 import LoadingButton from "../components/LoadingButton";
 import Spinner from "../components/Spinner";
+import { distanceM } from "../lib/geo";
 import { dropIcon, meIcon } from "../lib/mapIcons";
 
 interface DropListItem {
@@ -23,10 +24,10 @@ interface DropListItem {
 
 type SortBy = "distance" | "newest" | "expiring";
 
-// Geocoding goes to OpenStreetMap's Nominatim — the same operator already
-// serving the map tiles, so no new party learns where you're looking. Its
-// usage policy forbids autocomplete, so this only runs on submit.
-const GEOCODER = "https://nominatim.openstreetmap.org/search";
+// OpenStreetMap's Nominatim, proxied by our own server (nginx.conf.template)
+// so OSM never sees the visitor's IP. Its usage policy forbids autocomplete,
+// so this only runs on submit.
+const GEOCODER = "/geocode";
 // Coarse, recently-cached positions are fine for a 50km browse radius. The
 // previous defaults (no timeout, maximumAge 0) made the browser wait for a
 // fresh precise fix every visit — the ~20s delay.
@@ -109,7 +110,12 @@ export default function Home() {
     setMe([lat, lng]);
     setPanned(null);
     try {
-      const result = await api.listDrops(lat, lng);
+      const result = ((await api.listDrops(lat, lng)) as DropListItem[]).map((d) => ({
+        ...d,
+        // The server only saw a rounded position, so its distance is off by
+        // up to ~1km — recompute from the exact one, which never left here.
+        distance_m: d.latitude == null || d.longitude == null ? null : distanceM(lat, lng, d.latitude, d.longitude),
+      }));
       if (id !== requestId.current) return;
       setDrops(result);
       lastView = { center: [lat, lng], drops: result, at: Date.now() };
@@ -130,8 +136,9 @@ export default function Home() {
     setStatus("searching");
     setError("");
     try {
-      const res = await fetch(`${GEOCODER}?format=jsonv2&limit=1&q=${encodeURIComponent(q)}`);
-      const hits: { lat: string; lon: string }[] = res.ok ? await res.json() : [];
+      const res = await fetch(`${GEOCODER}?q=${encodeURIComponent(q)}`);
+      if (!res.ok) throw new Error();
+      const hits: { lat: string; lon: string }[] = await res.json();
       if (id !== requestId.current) return;
       if (!hits.length) {
         setStatus("");
@@ -211,7 +218,7 @@ export default function Home() {
       </p>
 
       <MapContainer center={me} zoom={14} style={{ height: 320, marginBottom: 12 }}>
-        <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+        <TileLayer attribution="&copy; OpenStreetMap contributors" url="/tiles/{z}/{x}/{y}.png" />
         <MapController center={me} onMoved={onMapMoved} />
         <Marker position={me} icon={meIcon} />
         {visibleDrops

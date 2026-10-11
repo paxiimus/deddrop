@@ -41,8 +41,8 @@ help:
 	@printf "$(DIM)Deployment$(RESET)\n"
 	@echo "  make secrets            Generate a fresh DJANGO_SECRET_KEY + DB_PASSWORD pair"
 	@echo "  make check-placeholders Scan for unfilled placeholder values before a real launch"
-	@echo "  make deploy             git pull, rebuild, migrate, restart (assumes a git-based server checkout)"
-	@echo "  See DEPLOYING.md for a full walkthrough (single instance, public or private)."
+	@echo "  ./deploy.sh            One-command deploy/redeploy to a server, run from your machine"
+	@echo "  make deploy             On the server itself: git pull, rebuild, migrate, restart"
 	@echo ""
 	@printf "$(DIM)Danger zone$(RESET)\n"
 	@echo "  make clean          Stop everything and DELETE all volumes (database, media). Asks first."
@@ -120,7 +120,7 @@ backup:
 .PHONY: restore
 restore:
 	@test -n "$(FILE)" || (echo "Usage: make restore FILE=backups/xxx.sql" && exit 1)
-	$(COMPOSE) exec -T db psql -U deaddrop -d deaddrop < $(FILE)
+	$(COMPOSE) exec -T db psql -q -v ON_ERROR_STOP=1 --single-transaction -U deaddrop -d deaddrop < $(FILE)
 
 # --- Deployment ----------------------------------------------------------
 

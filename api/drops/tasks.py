@@ -51,3 +51,23 @@ def purge_orphan_identities():
     cutoff = timezone.now() - timedelta(hours=settings.MAX_DROP_LIFETIME_HOURS)
     count, _ = Identity.objects.filter(created_at__lt=cutoff, drops__isnull=True).delete()
     return f"Purged {count} orphan identities"
+
+
+@shared_task
+def purge_old_records():
+    """Moderation and admin records don't outlive RECORD_RETENTION_DAYS:
+    reports (open or not — act on them within that window), the admin's
+    change history, and expired admin sessions."""
+    from datetime import timedelta
+
+    from django.conf import settings
+    from django.contrib.admin.models import LogEntry
+    from django.contrib.sessions.models import Session
+
+    from .models import Report
+
+    cutoff = timezone.now() - timedelta(days=settings.RECORD_RETENTION_DAYS)
+    reports, _ = Report.objects.filter(created_at__lt=cutoff).delete()
+    log_entries, _ = LogEntry.objects.filter(action_time__lt=cutoff).delete()
+    sessions, _ = Session.objects.filter(expire_date__lt=timezone.now()).delete()
+    return f"Purged {reports} reports, {log_entries} admin log entries, {sessions} expired sessions"

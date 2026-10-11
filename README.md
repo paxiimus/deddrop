@@ -23,6 +23,7 @@ minimal features, minimal data, maximum defensibility.
 - [Funding](#funding)
 - [Contributing](#contributing)
 - [Security](#security)
+- [Data credits](#data-credits)
 - [License](#license)
 - [Stack](#stack)
 
@@ -86,7 +87,9 @@ Two background processes run continuously, independent of any request:
 `expires_at` passes; `purge_old_drops` (hourly) actually deletes it — row,
 photos, files on disk, messages — once it's past that same point. Reports
 survive the purge (`Report.drop` is `SET_NULL`, not `CASCADE`), so a
-moderation record persists even after the reported content itself is gone.
+moderation record persists after the reported content is gone — for 30
+days: `purge_old_records` (daily) deletes reports and the admin's change
+log after `RECORD_RETENTION_DAYS`, along with expired admin sessions.
 
 A request that mutates anything goes through, in order: the private-access
 gate (if one is set), the kill switch (if cooling), CORS, then whichever
@@ -104,6 +107,7 @@ api/
 │   ├── middleware.py       # PrivateAccessMiddleware, CoolingMiddleware
 │   ├── private_access.py   # The shared private-access gate logic
 │   ├── cache.py            # Fail-open Redis cache wrapper
+│   ├── privacy.py          # ip_token: keyed IP hash for every cache key
 │   └── celery.py           # Celery app definition
 ├── drops/                  # The core app — drops, messages, reports, site status
 │   ├── models.py           # Drop, DropPhoto, DropVideo, Message, Report, SiteStatus
@@ -111,7 +115,7 @@ api/
 │   ├── serializers.py      # Create/update/read serializers, field validation
 │   ├── permissions.py      # CanManageDrop
 │   ├── throttles.py        # Every per-IP rate limit
-│   ├── tasks.py            # expire_drops, purge_old_drops (Celery)
+│   ├── tasks.py            # Scheduled expiry and retention purges (Celery)
 │   └── migrations/
 ├── identities/              # Pseudonymous, keypair-based identity — separate from drops
 │   ├── auth.py             # SignatureAuthentication — how a signed request is verified
@@ -134,14 +138,18 @@ web/src/
 │   ├── crypto.ts           # ed25519 keypair generation, signing, E2E message encryption
 │   └── storage.ts          # localStorage — identity, owner secrets, message keys
 └── App.tsx                 # Routing, and the top-level cooling/private-access screen swap
+
+web/nginx.conf.template     # Serves the app; proxies and caches OSM tiles and search
 ```
 
 ## Running it yourself
 
 This is the quick local/dev version — full containerized stack, no domain
-or TLS needed. For an actual production deployment with a real domain
-(either the public instance or a single private deployment), see
-`DEPLOYING.md` instead.
+or TLS needed. For production with a real domain, use `deploy.sh`: point
+DNS for both domains at a fresh Debian 12/13 or Ubuntu 24.04 server you can
+SSH into as root, copy `deploy.env.example` to `deploy.env`, fill it in, and
+run `./deploy.sh` from your own machine. Its header lists the other
+commands (rollback, backup, status, logs).
 
 ```bash
 cp .env.example .env   # fill in DJANGO_SECRET_KEY, DB_PASSWORD, VITE_API_URL
@@ -168,7 +176,7 @@ startup — changing any of them means `make build` (or `make up`, which
 rebuilds), not just a restart.
 
 One-click deploy templates (DigitalOcean, Railway) are still just an idea,
-not built. `DEPLOYING.md` covers a real, current production deployment —
+not built. `deploy.sh` covers a real, current production deployment —
 the public instance or a single private one. Managed hosting for
 organisations that would rather not run their own is also available as a
 paid offering — get in touch — though the operational playbook behind
@@ -381,7 +389,7 @@ API for TLS, its default body size limit is usually far smaller than
 *before it ever reaches Django*, completely invisible to anything in this
 codebase. Remember `client_max_body_size 100m;` (or whatever you set
 `MAX_VIDEO_SIZE_BYTES` to) when that day comes — see `Caddyfile.example`
-and `DEPLOYING.md` for the reverse proxy this project actually documents.
+for the reverse proxy this project actually documents.
 
 ## Platform notes (PWA / React web)
 
@@ -427,8 +435,7 @@ general-purpose tool doesn't.
 There's no fee to create a drop and there never will be — that's the actual
 promise. If you want to support hosting costs, as many ways as possible:
 
-**Crypto: Coming Soon**
-
+**Crypto:**
 - Bitcoin (BTC): `<address>`
 - Ethereum (ETH): `<address>`
 - Monero (XMR): `<address>`
@@ -450,6 +457,10 @@ adding new scope should be an issue first.
 Found a vulnerability? See `SECURITY.md` — please don't open a public
 issue for it.
 
+## Data credits
+
+- IP geolocation for the optional UK block: [IP Geolocation by DB-IP](https://db-ip.com) (CC BY 4.0).
+
 ## License
 
 AGPL-3.0. If you run a modified version as a network service, you must make
@@ -462,7 +473,9 @@ Copyright (C) 2026 Paxiimus (Kejon Fubler)
 Django 5 / DRF backend, Postgres, Redis + Celery for scheduled expiry.
 React + Vite + TypeScript PWA in `web/` — the only client. No mobile app.
 Map is Leaflet + OpenStreetMap tiles (no Google Maps dependency, matches the
-project's ethos). Theme is dark — midnight background, sunset-orange/amber/
+project's ethos). Tiles and place search are proxied and cached by the web
+container's nginx (`web/nginx.conf.template`), so OpenStreetMap never sees
+visitors' IPs or the areas they browse. Theme is dark — midnight background, sunset-orange/amber/
 pink accents — defined once as CSS variables in `web/src/styles.css`. The
 whole stack — including the web app, built and served via nginx — runs
 through `docker-compose.yml`, wrapped by the `Makefile` for day-to-day use.

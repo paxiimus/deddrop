@@ -8,7 +8,8 @@ from django.core.cache import cache
 from django.db import IntegrityError
 from rest_framework.authentication import BaseAuthentication
 from rest_framework.exceptions import AuthenticationFailed, Throttled
-from rest_framework.throttling import BaseThrottle
+
+from deaddrop.privacy import ip_token
 
 from .models import Identity
 
@@ -118,7 +119,7 @@ class SignatureAuthentication(BaseAuthentication):
             return Identity.objects.get(public_key=pub), False
         except Identity.DoesNotExist:
             pass
-        ip_key = f"new_identity:{BaseThrottle().get_ident(request)}"
+        ip_key = f"new_identity:{ip_token(request)}"
         created_this_hour = cache.get(ip_key, 0)
         if created_this_hour >= NEW_IDENTITIES_PER_IP_PER_HOUR:
             raise Throttled(detail="Too many new identities from this network.")

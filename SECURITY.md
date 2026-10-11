@@ -27,7 +27,8 @@ doesn't hold:
 - **Photos are stripped of EXIF** (device/GPS metadata) on upload — see
   `DropPhoto._strip_exif` in `drops/models.py`.
 - **IPs are never persisted** — they only ever touch Redis-backed
-  throttle caches, never the database. See `drops/throttles.py`.
+  throttle caches, as keyed hashes, in a Redis that never writes to disk.
+  See `deaddrop/privacy.py` and `drops/throttles.py`.
 - **The public instance has no media upload path at all** — not rate
   limited, not gated by identity, genuinely absent. See "Deployment tiers
   and media safety" in `README.md` for the full reasoning, including an

@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 
+from celery.schedules import crontab
 from corsheaders.defaults import default_headers
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -286,9 +287,15 @@ CACHES = {
 CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", "redis://localhost:6379/0")
 CELERY_BEAT_SCHEDULE = {
     "expire-drops": {"task": "drops.tasks.expire_drops", "schedule": 300},  # every 5 min
-    "purge-old-drops": {"task": "drops.tasks.purge_old_drops", "schedule": 3600},  # every hour
-    "purge-orphan-identities": {"task": "drops.tasks.purge_orphan_identities", "schedule": 86400},  # daily
+    # Clock times, not intervals: beat's schedule file lives in /tmp, so every
+    # deploy restarts the countdown, and a "daily" interval would never fire
+    # on a server deployed more than once a day.
+    "purge-old-drops": {"task": "drops.tasks.purge_old_drops", "schedule": crontab(minute=7)},  # hourly
+    "purge-orphan-identities": {"task": "drops.tasks.purge_orphan_identities", "schedule": crontab(hour=3, minute=40)},
+    "purge-old-records": {"task": "drops.tasks.purge_old_records", "schedule": crontab(hour=3, minute=45)},
 }
+# Reports and the admin's change log are deleted after this many days.
+RECORD_RETENTION_DAYS = 30
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 LANGUAGE_CODE = "en-us"
@@ -313,5 +320,9 @@ LOGGING = {
     "disable_existing_loggers": False,
     "handlers": {"console": {"class": "logging.StreamHandler"}},
     "root": {"handlers": ["console"], "level": "WARNING"},
-    "loggers": {"django": {"handlers": ["console"], "level": "WARNING", "propagate": False}},
+    "loggers": {
+        "django": {"handlers": ["console"], "level": "WARNING", "propagate": False},
+        # At WARNING this logs every 4xx with its full path (drop IDs etc.).
+        "django.request": {"handlers": ["console"], "level": "ERROR", "propagate": False},
+    },
 }

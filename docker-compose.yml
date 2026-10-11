@@ -23,6 +23,9 @@ services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped  # without this, a reboot left the database/cache down while api restarted into a crash loop
+    # Errors are still logged, but without the SQL statement that caused
+    # them — that would put message ciphertext, coordinates etc. in the log.
+    command: ["postgres", "-c", "log_min_error_statement=panic", "-c", "log_error_verbosity=terse"]
     environment:
       POSTGRES_DB: deaddrop
       POSTGRES_USER: deaddrop
@@ -37,6 +40,9 @@ services:
 
   redis:
     image: redis:7-alpine
+    # Memory only: throttle counters (hashed IPs) and the Celery queue are
+    # never written to disk. A restart just resets the counters.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -58,9 +64,8 @@ services:
       # 127.0.0.1, not a bare port — binding to all interfaces would put
       # this directly on the public internet, bypassing Caddy and TLS
       # entirely, unless the operator separately remembers to configure a
-      # host firewall (which nothing in DEPLOYING.md or SECURITY.md
-      # actually told them to do). Caddy runs on this same host and
-      # reaches it via localhost regardless — this only removes the
+      # host firewall. Caddy runs on this same host and reaches it via
+      # localhost regardless — this only removes the
       # direct, external, unencrypted path, and doesn't depend on the
       # operator getting a separate step right.
       - "127.0.0.1:8000:8000"
@@ -126,6 +131,8 @@ services:
         VITE_MAX_PHOTOS: ${MAX_PHOTOS_PER_DROP:-2}
         VITE_MAX_VIDEOS: ${MAX_VIDEOS_PER_DROP:-1}
         VITE_MAX_DROP_LIFETIME_HOURS: ${MAX_DROP_LIFETIME_HOURS:-336}
+        # The app's own public URL, for absolute link-preview tags in index.html.
+        VITE_PUBLIC_URL: ${VITE_PUBLIC_URL:-http://localhost:5173}
     ports:
       # Same 127.0.0.1 reasoning as the api service above — the frontend
       # isn't sensitive in the same way the admin/API are, but serving
@@ -136,6 +143,14 @@ services:
       # full containerized stack — CORS_ORIGINS above doesn't need to
       # change depending on which one you're using.
       - "127.0.0.1:5173:80"
+    environment:
+      # Identifies this instance to OpenStreetMap, whose tile and search
+      # servers this container proxies (their usage policies require it).
+      OSM_USER_AGENT: "DeadDrop (+${VITE_PUBLIC_URL:-http://localhost:5173})"
+      OSM_REFERER: "${VITE_PUBLIC_URL:-http://localhost:5173}/"
+    tmpfs:
+      # Place-search cache: memory only, never written to disk.
+      - /var/cache/nginx/geocode:size=16m
     restart: unless-stopped
 
 volumes:
