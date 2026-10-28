@@ -43,6 +43,7 @@ def cooling_info():
             "cooling": s.is_cooling,
             "message": s.cooling_message if s.is_cooling else "",
             "until": s.cooling_until.isoformat() if s.is_cooling else None,
+            "messages": s.messages_enabled,
         }
         cache.set(CACHE_KEY, info, timeout=CACHE_TTL_SECONDS)
     return info

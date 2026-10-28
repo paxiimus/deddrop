@@ -222,6 +222,13 @@ class SiteStatus(models.Model):
 
     cooling_until = models.DateTimeField(null=True, blank=True)
     cooling_message = models.CharField(max_length=200, blank=True, default="")
+    # Site-wide switch for drop threads. Off: nobody can read or post, and
+    # the app hides the thread. Existing messages stay stored, unreadable,
+    # and are deleted with their drop at expiry as usual.
+    messages_enabled = models.BooleanField(
+        default=True,
+        help_text="Untick to turn off messages on every drop. Takes effect within a few seconds.",
+    )
 
     class Meta:
         verbose_name_plural = "Site status"

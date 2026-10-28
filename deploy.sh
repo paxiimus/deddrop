@@ -11,6 +11,8 @@
 #   ./deploy.sh status     Container status and health, server and public.
 #   ./deploy.sh logs       Follow the API logs.
 #   ./deploy.sh ssh        Shell on the server, in the app directory.
+#   ./deploy.sh messages on|off|status
+#                          Turn drop messages on or off site-wide.
 #
 # Configuration: deploy.env (copy deploy.env.example). Secrets are generated
 # ON the server at first deploy and never leave it.
@@ -28,6 +30,8 @@ DEPLOYMENT_MODE="${DEPLOYMENT_MODE:-public}"
 ADMIN_ALLOW_IPS="${ADMIN_ALLOW_IPS:-}"
 BACKUP_KEEP_DAYS="${BACKUP_KEEP_DAYS:-3}"
 BLOCK_UK="${BLOCK_UK:-false}"
+LANDING_DOMAINS="${LANDING_DOMAINS:-}"
+BLOCK_UK_LANDING="${BLOCK_UK_LANDING:-false}"
 AGE_RECIPIENT="${AGE_RECIPIENT:-}"
 APP_DIR="deaddrop-privacy"   # relative to the deploy user's home
 
@@ -49,6 +53,9 @@ done
 [[ "$ADMIN_ALLOW_IPS" =~ ^[0-9A-Fa-f:./\ ]*$ ]] || die "ADMIN_ALLOW_IPS: space-separated IPs/CIDRs only"
 [[ "$BACKUP_KEEP_DAYS" =~ ^[0-9]+$ ]] || die "BACKUP_KEEP_DAYS must be a number"
 [[ "$BLOCK_UK" =~ ^(true|false)$ ]] || die "BLOCK_UK must be true or false"
+[[ "$LANDING_DOMAINS" =~ ^([a-z0-9.-]+\.[a-z]{2,}( [a-z0-9.-]+\.[a-z]{2,})*)?$ ]] || die "LANDING_DOMAINS: space-separated domains only"
+[[ "$BLOCK_UK_LANDING" =~ ^(true|false)$ ]] || die "BLOCK_UK_LANDING must be true or false"
+[[ "$BLOCK_UK_LANDING" == false || "$BLOCK_UK" == true ]] || die "BLOCK_UK_LANDING=true needs BLOCK_UK=true"
 [[ "$DEPLOY_USER" =~ ^[a-z][a-z0-9-]*$ ]] || die "DEPLOY_USER looks invalid"
 
 SSH_OPTS=(-o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new)
@@ -56,7 +63,7 @@ as_deploy() { ssh "${SSH_OPTS[@]}" -o BatchMode=yes "${DEPLOY_USER}@${SERVER}" "
 as_root()   { ssh "${SSH_OPTS[@]}" -o BatchMode=yes "root@${SERVER}" "$@"; }
 
 # Variables handed to remote scripts (all validated above).
-REMOTE_ENV="APP_DIR='$APP_DIR' REPO_URL='$REPO_URL' REF='$REF' APP_DOMAIN='$APP_DOMAIN' API_DOMAIN='$API_DOMAIN' ACME_EMAIL='$ACME_EMAIL' DEPLOYMENT_MODE='$DEPLOYMENT_MODE' ADMIN_ALLOW_IPS='$ADMIN_ALLOW_IPS' BACKUP_KEEP_DAYS='$BACKUP_KEEP_DAYS' DEPLOY_USER='$DEPLOY_USER' BLOCK_UK='$BLOCK_UK'"
+REMOTE_ENV="APP_DIR='$APP_DIR' REPO_URL='$REPO_URL' REF='$REF' APP_DOMAIN='$APP_DOMAIN' API_DOMAIN='$API_DOMAIN' ACME_EMAIL='$ACME_EMAIL' DEPLOYMENT_MODE='$DEPLOYMENT_MODE' ADMIN_ALLOW_IPS='$ADMIN_ALLOW_IPS' BACKUP_KEEP_DAYS='$BACKUP_KEEP_DAYS' DEPLOY_USER='$DEPLOY_USER' BLOCK_UK='$BLOCK_UK' LANDING_DOMAINS='$LANDING_DOMAINS' BLOCK_UK_LANDING='$BLOCK_UK_LANDING'"
 
 # ------------------------------------------------------------- bootstrap --
 bootstrap() {
@@ -267,6 +274,19 @@ fi
 admin_password=$(grep -oP '^DJANGO_SUPERUSER_PASSWORD=\K.+' .env || true)
 [ -n "$admin_password" ] && set_env DJANGO_SUPERUSER_PASSWORD ""
 
+# --- Landing page (LANDING_DOMAINS): served by Caddy from a copy outside the
+# deploy user's home, which Caddy can't read. The app link is pointed at
+# APP_DOMAIN. Swapped in whole, so a half-copied page is never served.
+landing=/etc/caddy/deaddrop/landing
+if [ -n "$LANDING_DOMAINS" ]; then
+  [ -f landing/index.html ] || { echo "LANDING_DOMAINS is set, but this release has no landing/index.html."; exit 1; }
+  rm -rf "$landing.new" && cp -r landing "$landing.new"
+  sed -i "s#https://app\.your-domain\.example#https://${APP_DOMAIN}#g" "$landing.new/index.html"
+  chmod -R a+rX "$landing.new"
+  rm -rf "$landing.old"; [ -d "$landing" ] && mv "$landing" "$landing.old"
+  mv "$landing.new" "$landing" && rm -rf "$landing.old"
+fi
+
 # --- Caddy: regenerate the config from deploy.env, reload only if it changed
 if [ "$DEPLOYMENT_MODE" = public ]; then max_body=1MB; else max_body="$(grep -oP '^MAX_VIDEO_SIZE_MB=\K[0-9]+' .env || echo 100)MB"; fi
 admin_block=""
@@ -300,7 +320,8 @@ cat > "$tmp" <<EOF
 
 EOF
 
-# UK block (BLOCK_UK=true): UK IP addresses get a 451 page on both domains.
+# UK block (BLOCK_UK=true): UK IP addresses get a 451 page on the app and API
+# domains, and on the landing page only if BLOCK_UK_LANDING=true.
 # ADMIN_ALLOW_IPS are exempt, so the operator can reach their own instance.
 uk_import=""
 if [ "$BLOCK_UK" = true ]; then
@@ -351,6 +372,20 @@ ${uk_import}
 ${admin_block}	reverse_proxy 127.0.0.1:8000
 }
 EOF
+if [ -n "$LANDING_DOMAINS" ]; then
+  landing_uk=""; [ "$BLOCK_UK_LANDING" = true ] && landing_uk="$uk_import"
+  cat >> "$tmp" <<EOF
+
+${LANDING_DOMAINS// /, } {
+	import common
+${landing_uk}
+	root * ${landing}
+	encode zstd gzip
+	header Cache-Control "public, max-age=3600"
+	file_server
+}
+EOF
+fi
 if ! cmp -s "$tmp" /etc/caddy/Caddyfile; then
   caddy validate --adapter caddyfile --config "$tmp" >/dev/null 2>&1 || { echo "Generated Caddyfile is invalid:"; caddy validate --adapter caddyfile --config "$tmp"; exit 1; }
   cat "$tmp" > /etc/caddy/Caddyfile
@@ -406,7 +441,7 @@ public_check() {
 # Warn (don't fail) if DNS doesn't point where we're deploying.
 check_dns() {
   [[ "$SERVER" =~ ^[0-9.]+$ ]] && command -v dig >/dev/null || return 0
-  for d in "$APP_DOMAIN" "$API_DOMAIN"; do
+  for d in "$APP_DOMAIN" "$API_DOMAIN" $LANDING_DOMAINS; do
     got=$(dig +short A "$d" | tail -1)
     [[ "$got" == "$SERVER" ]] || printf '\033[1;31mWarning:\033[0m %s resolves to "%s", not %s. HTTPS certificates will fail until it does.\n' "$d" "$got" "$SERVER" >&2
   done
@@ -474,5 +509,9 @@ case "${1:-deploy}" in
   status) status ;;
   logs) ssh "${SSH_OPTS[@]}" -t "${DEPLOY_USER}@${SERVER}" "cd ~/${APP_DIR} && docker compose logs -f --tail=100 api" ;;
   ssh) ssh "${SSH_OPTS[@]}" -t "${DEPLOY_USER}@${SERVER}" "cd ~/${APP_DIR} && exec \$SHELL -l" ;;
-  *) sed -n '2,20p' "$0"; exit 1 ;;
+  messages)
+    state="${2:-status}"
+    [[ "$state" =~ ^(on|off|status)$ ]] || die "Usage: ./deploy.sh messages on|off|status"
+    ssh "${SSH_OPTS[@]}" "${DEPLOY_USER}@${SERVER}" "cd ~/${APP_DIR} && docker compose exec -T api python manage.py messages ${state}" ;;
+  *) sed -n '2,18p' "$0"; exit 1 ;;
 esac

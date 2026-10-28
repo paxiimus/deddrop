@@ -320,6 +320,39 @@ code {
 }
 
 /* Leaflet */
+/* Dark map: OpenStreetMap only serves light tiles, so the tile layer alone is
+ * inverted and warmed to sit on the app's palette. Markers, popups and
+ * controls are untouched. Tune the look here. */
+:root {
+  --map-tiles-filter: invert(1) hue-rotate(180deg) brightness(0.92) contrast(0.88) saturate(0.55) sepia(0.18);
+}
+.leaflet-tile-pane {
+  filter: var(--map-tiles-filter);
+}
+.drop-map {
+  height: 220px;
+  margin-bottom: 12px;
+}
+.leaflet-bar a,
+.leaflet-bar a:hover {
+  background: var(--bg-elevated);
+  color: var(--text);
+  border-bottom-color: var(--border);
+}
+.leaflet-bar a:hover {
+  color: var(--accent);
+}
+.leaflet-bar {
+  border: 1px solid var(--border) !important;
+  box-shadow: none !important;
+}
+.leaflet-container .leaflet-control-attribution {
+  background: rgba(10, 7, 7, 0.75);
+  color: var(--text-dim);
+}
+.leaflet-control-attribution a {
+  color: var(--accent-2);
+}
 .leaflet-container {
   /* Deliberately NOT pure black or matching --bg — if tiles fail to load
    * over the network, this should look like an empty map placeholder, not

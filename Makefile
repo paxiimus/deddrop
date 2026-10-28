@@ -1,4 +1,7 @@
 .DEFAULT_GOAL := help
+# No built-in suffix rules: otherwise `make deploy` would copy deploy.sh to a
+# file called `deploy` instead of saying there's no such target.
+.SUFFIXES:
 COMPOSE := docker compose
 
 # Bold amber/orange approximations of the brand accent — standard 8-color
@@ -41,8 +44,15 @@ help:
 	@printf "$(DIM)Deployment$(RESET)\n"
 	@echo "  make secrets            Generate a fresh DJANGO_SECRET_KEY + DB_PASSWORD pair"
 	@echo "  make check-placeholders Scan for unfilled placeholder values before a real launch"
-	@echo "  ./deploy.sh            One-command deploy/redeploy to a server, run from your machine"
-	@echo "  make deploy             On the server itself: git pull, rebuild, migrate, restart"
+	@echo ""
+	@printf "$(DIM)Production (from your machine, server in deploy.env)$(RESET)\n"
+	@echo "  make prod-deploy    Deploy or redeploy (first run also sets up the server)"
+	@echo "  make prod-status    Release, container health, local and public checks"
+	@echo "  make prod-logs      Follow the API logs"
+	@echo "  make prod-ssh       Shell on the server, in the app directory"
+	@echo "  make prod-backup    Download a fresh database dump to backups/"
+	@echo "  make prod-rollback  Undo the last deploy: previous release + pre-deploy database (asks first)"
+	@echo "  make prod-messages-off / prod-messages-on   Turn drop messages off or on site-wide"
 	@echo ""
 	@printf "$(DIM)Danger zone$(RESET)\n"
 	@echo "  make clean          Stop everything and DELETE all volumes (database, media). Asks first."
@@ -161,12 +171,32 @@ check-placeholders:
 	done; \
 	if [ "$$FOUND" = "0" ]; then echo "  Nothing found — but this only catches known placeholder patterns, not everything worth checking before launch."; fi
 
-.PHONY: deploy
-deploy:
-	git pull
-	$(COMPOSE) build
-	$(COMPOSE) up -d
-	$(COMPOSE) exec api python manage.py migrate
+# --- Production (wraps deploy.sh) -----------------------------------------
+
+.PHONY: prod-deploy prod-status prod-logs prod-ssh prod-backup prod-rollback prod-messages-off prod-messages-on
+prod-deploy:
+	./deploy.sh deploy
+
+prod-status:
+	./deploy.sh status
+
+prod-logs:
+	./deploy.sh logs
+
+prod-ssh:
+	./deploy.sh ssh
+
+prod-backup:
+	./deploy.sh backup
+
+prod-rollback:
+	./deploy.sh rollback
+
+prod-messages-off:
+	./deploy.sh messages off
+
+prod-messages-on:
+	./deploy.sh messages on
 
 # --- Danger zone -----------------------------------------------------
 

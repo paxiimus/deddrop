@@ -278,6 +278,11 @@ class MessageListCreateView(generics.ListCreateAPIView):
     serializer_class = MessageSerializer
     permission_classes = [permissions.AllowAny]
 
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        if not cooling_info().get("messages", True):
+            raise PermissionDenied("Messages are turned off on this instance.", code="messages_disabled")
+
     def _drop_or_deny(self, lock=False):
         """The thread inherits its drop's password. Contents were always
         safe (the key lives in the URL fragment, never sent here), but
@@ -455,6 +460,7 @@ class StatusView(generics.GenericAPIView):
             "cooling": info["cooling"],
             "cooling_until": info["until"],
             "message": info["message"],
+            "messages_enabled": info.get("messages", True),
             "private_access_required": private_access.is_required(),
             "private_access_granted": private_access.is_granted(request),
         })

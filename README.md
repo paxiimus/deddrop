@@ -148,8 +148,8 @@ This is the quick local/dev version — full containerized stack, no domain
 or TLS needed. For production with a real domain, use `deploy.sh`: point
 DNS for both domains at a fresh Debian 12/13 or Ubuntu 24.04 server you can
 SSH into as root, copy `deploy.env.example` to `deploy.env`, fill it in, and
-run `./deploy.sh` from your own machine. Its header lists the other
-commands (rollback, backup, status, logs).
+run `make prod-deploy` from your own machine. `make help` lists the other
+production commands (status, logs, ssh, backup, rollback).
 
 ```bash
 cp .env.example .env   # fill in DJANGO_SECRET_KEY, DB_PASSWORD, VITE_API_URL
@@ -271,6 +271,16 @@ A donation-maintained, no-SLA service has no obligation to survive a
 surge it can't afford — this is the honest version of that: closed for a
 bit, here's when, rather than a server quietly struggling or a bill
 quietly spiking.
+
+### Turning messages off
+
+The same `SiteStatus` row has a `messages_enabled` box. Untick it (or run
+`make prod-messages-off` from your machine) and, within a few seconds,
+every drop's thread is closed: the API refuses to list or post messages,
+and the app shows "Messages are turned off on this instance" instead of
+the thread. Drops themselves keep working. Existing messages stay stored,
+still unreadable to the server, and are deleted with their drop at expiry
+as usual. `make prod-messages-on` reopens them.
 
 ## The private-access gate
 

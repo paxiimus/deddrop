@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import Modal from "../components/Modal";
+import DropMap from "../components/DropMap";
 import DropQRCode from "../components/DropQRCode";
 import LoadingButton from "../components/LoadingButton";
 import Spinner from "../components/Spinner";
@@ -63,6 +64,8 @@ export default function DropDetail() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
+  // Site-wide switch (admin or `make prod-messages-off`); assume on until told otherwise.
+  const [messagesOn, setMessagesOn] = useState(true);
   const [draft, setDraft] = useState("");
   const [messageKey, setMessageKey] = useState<string | null>(null);
   const [reportOpen, setReportOpen] = useState(false);
@@ -169,11 +172,16 @@ export default function DropDetail() {
       // Unsigned unless this is known to be your own drop: signing every
       // view would link your identity to each drop you look at. The owner
       // secret (anonymous drops) is device-local and links nothing.
-      const d = await api.getDrop(id, pw, ownerSecret, asOwner);
+      const [d, site] = await Promise.all([
+        api.getDrop(id, pw, ownerSecret, asOwner),
+        api.getStatus().catch(() => null),
+      ]);
       setDrop(d);
       setNeedsPassword(false);
       setError("");
-      setMessages(await api.listMessages(id, pw));
+      const on = site?.messages_enabled !== false;
+      setMessagesOn(on);
+      setMessages(on ? await api.listMessages(id, pw) : []);
     } catch (e) {
       const status = (e as { status?: number }).status;
       const body = (e as { body?: { private_access_required?: boolean } }).body;
@@ -451,6 +459,7 @@ export default function DropDetail() {
       {drop.latitude != null && drop.longitude != null && (
         <div className="form-section">
           <h3>Location</h3>
+          <DropMap lat={drop.latitude} lng={drop.longitude} />
           <p className="mono">
             {drop.latitude}, {drop.longitude}
             <button
@@ -507,21 +516,27 @@ export default function DropDetail() {
 
       <div className="form-section">
         <h3>{drop.is_public ? "Messages" : "Exchange"}</h3>
-        {!messageKey && (
-          <p className="hint">
-            No decryption key on this device — you can't read existing messages here. Sending one anyway starts a new,
-            separate thread that only someone with the link below can read; it won't reach whoever has the original key.
-          </p>
+        {!messagesOn ? (
+          <p className="hint">Messages are turned off on this instance for now.</p>
+        ) : (
+          <>
+            {!messageKey && (
+              <p className="hint">
+                No decryption key on this device — you can't read existing messages here. Sending one anyway starts a new,
+                separate thread that only someone with the link below can read; it won't reach whoever has the original key.
+              </p>
+            )}
+            {decryptedMessages.map((m) => (
+              <div key={m.id} className={m.isSystem ? "msg system" : "msg"}>
+                {m.content}
+              </div>
+            ))}
+            <textarea value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Message…" />
+            <LoadingButton className="primary" loading={sending} loadingText="Sending…" onClick={sendMessage}>
+              Send (encrypted)
+            </LoadingButton>
+          </>
         )}
-        {decryptedMessages.map((m) => (
-          <div key={m.id} className={m.isSystem ? "msg system" : "msg"}>
-            {m.content}
-          </div>
-        ))}
-        <textarea value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Message…" />
-        <LoadingButton className="primary" loading={sending} loadingText="Sending…" onClick={sendMessage}>
-          Send (encrypted)
-        </LoadingButton>
       </div>
 
       {isPending ? (

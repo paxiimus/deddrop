@@ -23,7 +23,7 @@ class SiteStatusAdmin(admin.ModelAdmin):
     whole instance; it resumes automatically the moment that time passes
     — nothing to remember to toggle back."""
 
-    list_display = ["cooling_until", "is_cooling", "cooling_message"]
+    list_display = ["cooling_until", "is_cooling", "cooling_message", "messages_enabled"]
 
     def has_add_permission(self, request):
         return not SiteStatus.objects.exists()  # singleton — one row, ever
