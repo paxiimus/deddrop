@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/env bash 
 # One-command deploy for a single Dead Drop instance. Built for a fresh
 # Hetzner Cloud server (Debian 12/13 or Ubuntu 24.04); works on any VPS
 # with those images. Run it from YOUR machine, not the server.
