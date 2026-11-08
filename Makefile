@@ -175,28 +175,28 @@ check-placeholders:
 
 .PHONY: prod-deploy prod-status prod-logs prod-ssh prod-backup prod-rollback prod-messages-off prod-messages-on
 prod-deploy:
-	./deploy.sh deploy
+	bash deploy.sh deploy
 
 prod-status:
-	./deploy.sh status
+	bash deploy.sh status
 
 prod-logs:
-	./deploy.sh logs
+	bash deploy.sh logs
 
 prod-ssh:
-	./deploy.sh ssh
+	bash deploy.sh ssh
 
 prod-backup:
-	./deploy.sh backup
+	bash deploy.sh backup
 
 prod-rollback:
-	./deploy.sh rollback
+	bash deploy.sh rollback
 
 prod-messages-off:
-	./deploy.sh messages off
+	bash deploy.sh messages off
 
 prod-messages-on:
-	./deploy.sh messages on
+	bash deploy.sh messages on
 
 # --- Danger zone -----------------------------------------------------
 

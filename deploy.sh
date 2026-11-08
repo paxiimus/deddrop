@@ -1,4 +1,4 @@
-#!/usr/bin/env bash 
+#!/usr/bin/env bash
 # One-command deploy for a single Dead Drop instance. Built for a fresh
 # Hetzner Cloud server (Debian 12/13 or Ubuntu 24.04); works on any VPS
 # with those images. Run it from YOUR machine, not the server.
@@ -71,6 +71,7 @@ bootstrap() {
   as_root true 2>/dev/null || die "Can't SSH in as ${DEPLOY_USER}@ or root@${SERVER}. Add your SSH key to the server (Hetzner adds it at creation if you select it)."
 
   as_root "$REMOTE_ENV bash -s" <<'BOOTSTRAP'
+remote() {
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 . /etc/os-release
@@ -148,12 +149,15 @@ echo "${DEPLOY_USER} ALL=(root) NOPASSWD: $(command -v systemctl) reload caddy" 
 chmod 440 /etc/sudoers.d/deaddrop-caddy
 visudo -cqf /etc/sudoers.d/deaddrop-caddy
 echo "--- base setup done"
+}
+remote < /dev/null
 BOOTSTRAP
 
   # Only lock root out once the deploy user is proven to work.
   as_deploy true || die "The ${DEPLOY_USER} user can't log in. Root login is still enabled so you can investigate."
   log "Disabling root and password SSH logins"
   as_root bash -s <<'HARDEN'
+remote() {
 set -euo pipefail
 cat > /etc/ssh/sshd_config.d/01-deaddrop.conf <<'EOF'
 PermitRootLogin no
@@ -162,19 +166,27 @@ KbdInteractiveAuthentication no
 EOF
 sshd -t
 systemctl reload ssh 2>/dev/null || systemctl restart ssh
+}
+remote < /dev/null
 HARDEN
   as_deploy 'touch ~/.deaddrop-bootstrapped'
 }
 
 # ---------------------------------------------------------------- deploy --
+# The script arrives on stdin, so anything in it that reads stdin (docker
+# compose exec does) would swallow the rest of the script, and the deploy
+# would end early yet report success. Defining it as a function makes bash
+# read all of it first; it then runs with stdin from /dev/null.
 deploy() {
   if ! as_deploy 'test -f ~/.deaddrop-bootstrapped' 2>/dev/null; then
     bootstrap
   fi
   check_dns
   log "Deploying ${REF} to ${SERVER}"
+  log "Landing page: ${LANDING_DOMAINS:-off (LANDING_DOMAINS is not set in deploy.env)}"
 
   as_deploy "$REMOTE_ENV bash -s" <<'DEPLOY'
+remote() {
 set -euo pipefail
 cd ~
 first_deploy=0
@@ -194,6 +206,9 @@ else
   echo "REF '${REF}' isn't a tag or branch in ${REPO_URL}. Pushed it?"; exit 1
 fi
 PREV=$(git rev-parse HEAD)
+echo "Release: ${REF} from ${REPO_URL}"
+echo "  deploying: $(git log -1 --format='%h %s (%cr)' "$NEW")"
+echo "  replacing: $(git log -1 --format='%h %s (%cr)' "$PREV")"
 
 # UK IP list (BLOCK_UK=true), fetched before anything changes, using the
 # script from the release being deployed (git show: no checkout yet). If it
@@ -285,6 +300,9 @@ if [ -n "$LANDING_DOMAINS" ]; then
   chmod -R a+rX "$landing.new"
   rm -rf "$landing.old"; [ -d "$landing" ] && mv "$landing" "$landing.old"
   mv "$landing.new" "$landing" && rm -rf "$landing.old"
+  echo "Landing page installed for: ${LANDING_DOMAINS}"
+else
+  echo "Landing page: off."
 fi
 
 # --- Caddy: regenerate the config from deploy.env, reload only if it changed
@@ -417,17 +435,38 @@ if [ -n "$admin_password" ]; then
   echo "  user: admin    password: ${admin_password}"
   echo "==================================================================================="
 fi
+}
+remote < /dev/null
 DEPLOY
 
   log "Checking the public endpoints (first deploy can take a minute while certificates are issued)"
+  local live=0
   for i in $(seq 1 20); do
     case "$(public_check)" in
-      ok) log "Live: https://${APP_DOMAIN}"; return 0 ;;
-      uk) log "Live. You're seeing the UK block (HTTP 451) from where you are; check from outside the UK, or add your IP to ADMIN_ALLOW_IPS."; return 0 ;;
+      ok) log "Live: https://${APP_DOMAIN}"; live=1; break ;;
+      uk) log "Live. You're seeing the UK block (HTTP 451) from where you are; check from outside the UK, or add your IP to ADMIN_ALLOW_IPS."; live=1; break ;;
     esac
     sleep 6
   done
-  echo "The server is healthy but https://${APP_DOMAIN} isn't answering yet. Usually DNS or the certificate is still settling: check both domains' A/AAAA records point at the server, wait a few minutes, then run ./deploy.sh status." >&2
+  [[ $live == 1 ]] || echo "The server is healthy but https://${APP_DOMAIN} isn't answering yet. Usually DNS or the certificate is still settling: check both domains' A/AAAA records point at the server, wait a few minutes, then run ./deploy.sh status." >&2
+  landing_check
+}
+
+# Report each landing domain's HTTPS status (a new certificate can take a minute).
+landing_check() {
+  local d code
+  for d in $LANDING_DOMAINS; do
+    for i in $(seq 1 10); do
+      code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "https://${d}/" || true)
+      [[ "$code" =~ ^(200|451)$ ]] && break
+      sleep 6
+    done
+    case "$code" in
+      200) log "Landing live: https://${d}" ;;
+      451) log "Landing live: https://${d} (UK-blocked from where you are)" ;;
+      *) printf '\033[1;31mWarning:\033[0m https://%s answered "%s". Check its DNS points at %s, then: journalctl -u caddy | grep -i %s\n' "$d" "${code:-no connection}" "$SERVER" "$d" >&2 ;;
+    esac
+  done
 }
 
 # "ok", "uk" (both answer, with the UK block's 451), or "down".
@@ -456,6 +495,7 @@ rollback() {
   [[ "$answer" == rollback ]] || die "Cancelled."
 
   as_deploy "$REMOTE_ENV bash -s" <<'ROLLBACK'
+remote() {
 set -euo pipefail
 cd ~/"$APP_DIR"
 [ -f .deploy-previous ] || { echo "No previous deploy recorded."; exit 1; }
@@ -476,6 +516,8 @@ for _ in $(seq 1 60); do curl -fsS -o /dev/null http://127.0.0.1:8000/api/status
 curl -fsS -o /dev/null http://127.0.0.1:8000/api/status/ || { echo "Still unhealthy after rollback — check: ./deploy.sh logs"; exit 1; }
 rm -f .deploy-previous
 echo "Rolled back to $(git describe --tags --always)."
+}
+remote < /dev/null
 ROLLBACK
   echo "Set REF in deploy.env back to that release too, or the next ./deploy.sh redeploys the one you just rolled back."
 }
